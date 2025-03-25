@@ -1,3 +1,4 @@
 *.zip filter=lfs diff=lfs merge=lfs -text
 mrcnn/best_weights.h5 filter=lfs diff=lfs merge=lfs -text
 coco/best_initial_weight.h5 filter=lfs diff=lfs merge=lfs -text
+mrcnn/initial_weight.h5 filter=lfs diff=lfs merge=lfs -text
