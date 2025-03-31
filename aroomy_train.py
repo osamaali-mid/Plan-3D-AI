@@ -8,6 +8,8 @@ from mrcnn.config import Config
 from mrcnn import visualize
 from mrcnn.model import log
 import cv2
+import imgaug
+import imgaug.augmenters as iaa
 
 # Disable eager execution for TensorFlow 2.x compatibility
 tf.compat.v1.disable_eager_execution()
@@ -17,22 +19,22 @@ class FloorplanConfig(Config):
     NAME = "aroomy"
     NUM_CLASSES = 1 + 3  # Background + (wall, window, door)
     GPU_COUNT = 1
-    IMAGES_PER_GPU = 1
-    STEPS_PER_EPOCH = 50
+    IMAGES_PER_GPU = 1  # Reduce batch size to prevent OOM
+    STEPS_PER_EPOCH = 50  # Ensure full dataset coverage
     VALIDATION_STEPS = 50
     IMAGE_MIN_DIM = 512
     IMAGE_MAX_DIM = 1024
     DETECTION_MIN_CONFIDENCE = 0.7
-    LEARNING_RATE = 0.001
+    LEARNING_RATE = 0.0001  # Start with a lower LR to prevent divergence
 
 # Dataset preparation class
 class FloorplanDataset(utils.Dataset):
     def load_floorplan(self, dataset_dir, subset):
         """Load a subset of the Aroomy dataset."""
         # Add classes
-        self.add_class("aroomy", 1, "wall")
-        self.add_class("aroomy", 2, "window")
-        self.add_class("aroomy", 3, "door")
+        self.add_class("aroomy", 1, "door")
+        self.add_class("aroomy", 2, "wall")
+        self.add_class("aroomy", 3, "window")
 
         # Define path to annotations
         annotations_path = os.path.join(dataset_dir, subset, "annotations", "output_annotations.json")
@@ -59,7 +61,7 @@ class FloorplanDataset(utils.Dataset):
 
         for annotation in annotations["annotations"]:
             if annotation["image_id"] == image_info["id"]:
-                class_id = annotation["category_id"]
+                class_id = annotation["category_id"] + 1
                 segmentation = annotation["segmentation"]
                 mask = np.zeros([image_info["height"], image_info["width"]], dtype=np.uint8)
                 for polygon in segmentation:
@@ -83,7 +85,8 @@ ROOT_DIR = os.path.abspath(".")  # Ensure absolute path
 MODEL_DIR = os.path.abspath("mrcnn")
 os.makedirs(MODEL_DIR, exist_ok=True)
 
-COCO_WEIGHTS_PATH = os.path.join(ROOT_DIR, "coco/mask_rcnn_coco.h5")
+# COCO_WEIGHTS_PATH = os.path.join(ROOT_DIR, "coco/mask_rcnn_aroomy_0025.h5")
+COCO_WEIGHTS_PATH = os.path.join(ROOT_DIR, "coco/best_initial_weight.h5")
 DATASET_DIR = os.path.join(ROOT_DIR, "dataset")
 print("Set path configuration...")
 
@@ -105,7 +108,7 @@ print(f"STEPS_PER_EPOCH set to: {config.STEPS_PER_EPOCH}")
 
 # Validate dataset
 print("Validating dataset...")
-for image_id in dataset_train.image_ids:
+for image_id in dataset_train.image_ids[:5]:  # Print only first 5 for efficiency
     image = dataset_train.load_image(image_id)
     masks, class_ids = dataset_train.load_mask(image_id)
     print(f"Image {image_id}: Shape={image.shape}, Masks={masks.shape}, Classes={class_ids}")
@@ -123,12 +126,20 @@ print("Loading weights...")
 model.load_weights(COCO_WEIGHTS_PATH, by_name=True, exclude=["mrcnn_class_logits", "mrcnn_bbox_fc", "mrcnn_mask"])
 print("Loaded weights")
 
-# Train model
-print("Training model...")
+# Data Augmentation to Reduce Overfitting
+# augmentation = iaa.Sequential([
+#     iaa.Fliplr(0.5),  # Flip horizontally with 50% probability
+#     #iaa.Affine(rotate=(-15, 15), fit_output=True),  # Keep original size
+#     iaa.GaussianBlur(sigma=(0, 1.0)),  # Slight blurring
+#     iaa.Multiply((0.8, 1.2))  # Brightness variation
+# ], random_order=True) 
+
+print("\n🚀 Step 1: Training heads only...")
 model.train(dataset_train, dataset_val,
             learning_rate=config.LEARNING_RATE,
-            epochs=5,
-            layers="heads")
+            epochs=20,
+            layers="all"
+            )
 
 # Save trained model
 print("Training complete.")
