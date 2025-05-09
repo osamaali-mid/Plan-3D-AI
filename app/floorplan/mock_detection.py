@@ -92,29 +92,16 @@ def detect_objects(image_path, output_path, model, return_json=False):
     # Perform detection with the mock model
     results = model.detect([image], verbose=1)
     r = results[0]
-
+    print(r)
     # Create a simple visualization of the results
     output_image = image.copy()
     class_names = ['BG', 'Wall', 'Window', 'Door']
-    colors = {
-        1: (0, 255, 0),  # Green for walls
-        2: (255, 0, 0),  # Blue for windows
-        3: (0, 0, 255)   # Red for doors
-    }
-    
-    # Draw bounding boxes and labels
-    for i, class_id in enumerate(r['class_ids']):
-        y1, x1, y2, x2 = r['rois'][i]
-        cv2.rectangle(output_image, (x1, y1), (x2, y2), colors[class_id], 2)
-        cv2.putText(output_image, class_names[class_id], (x1, y1 - 10),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors[class_id], 2)
     
     # Save the output image
     output_file_path = os.path.abspath(output_path)
     os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
     cv2.imwrite(output_file_path, output_image)
     print(f"Output saved to: {output_file_path}")
-    
     # Return JSON-formatted results if requested
     if return_json:
         detected_objects = []

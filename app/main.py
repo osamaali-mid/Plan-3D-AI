@@ -158,9 +158,8 @@ class FloorplanElement(BaseModel):
 
 # Import floor plan processing functions
 from floorplan.preprocess import preprocess_image
-# Using mock_detection instead of real TensorFlow module
+# Use detection factory to automatically switch between real and mock implementations
 from floorplan.mock_detection import load_model, detect_objects
-from floorplan.utils import create_directory
 
 # Load the Mask R-CNN model once at startup
 model = None
