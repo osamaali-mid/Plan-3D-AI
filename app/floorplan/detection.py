@@ -1,6 +1,7 @@
 import cv2
 import sys
 import os
+import numpy as np
 import tensorflow as tf
 
 # Ensure project path is in the system path
@@ -42,9 +43,19 @@ def load_model():
     model.load_weights(weights_path, by_name=True, exclude=["mrcnn_class_logits", "mrcnn_bbox_fc", "mrcnn_bbox", "mrcnn_mask"])
     return model
 
-def detect_objects(image_path, output_path, model):
+def detect_objects(image_path, output_path, model, return_json=False):
     """
     Perform object detection on the preprocessed floorplan image.
+    
+    Args:
+        image_path: Path to the preprocessed image
+        output_path: Path to save the output image with visualized detections
+        model: Loaded Mask R-CNN model
+        return_json: Whether to return JSON formatted results
+        
+    Returns:
+        If return_json is True, returns a dictionary with detection results
+        Otherwise, returns None after saving the output image
     """
     # Load image
     image = cv2.imread(image_path)
@@ -66,3 +77,4 @@ def detect_objects(image_path, output_path, model):
     os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
     cv2.imwrite(output_file_path, output_image)
     print(f"Output saved to: {output_file_path}")
+    return None
