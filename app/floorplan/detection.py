@@ -1,6 +1,7 @@
 import cv2
 import sys
 import os
+import numpy as np
 import tensorflow as tf
 
 # Ensure project path is in the system path
@@ -42,9 +43,19 @@ def load_model():
     model.load_weights(weights_path, by_name=True, exclude=["mrcnn_class_logits", "mrcnn_bbox_fc", "mrcnn_bbox", "mrcnn_mask"])
     return model
 
-def detect_objects(image_path, output_path, model):
+def detect_objects(image_path, output_path, model, return_json=False):
     """
     Perform object detection on the preprocessed floorplan image.
+    
+    Args:
+        image_path: Path to the preprocessed image
+        output_path: Path to save the output image with visualized detections
+        model: Loaded Mask R-CNN model
+        return_json: Whether to return JSON formatted results
+        
+    Returns:
+        If return_json is True, returns a dictionary with detection results
+        Otherwise, returns None after saving the output image
     """
     # Load image
     image = cv2.imread(image_path)
@@ -66,3 +77,57 @@ def detect_objects(image_path, output_path, model):
     os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
     cv2.imwrite(output_file_path, output_image)
     print(f"Output saved to: {output_file_path}")
+    
+    # Return JSON-formatted results if requested
+    if return_json:
+        detected_objects = []
+        for i, class_id in enumerate(r['class_ids']):
+            # Get the class name
+            class_name = class_names[class_id]
+            # Get the score
+            score = float(r['scores'][i])
+            # Get the bounding box
+            y1, x1, y2, x2 = r['rois'][i]
+            # Get the mask
+            mask = r['masks'][:, :, i]
+            
+            # Create a contour from the mask
+            contours, _ = cv2.findContours(
+                (mask * 255).astype(np.uint8), 
+                cv2.RETR_EXTERNAL, 
+                cv2.CHAIN_APPROX_SIMPLE
+            )
+            
+            # Convert contours to list of points for JSON serialization
+            contour_points = []
+            if contours:
+                # Use the largest contour
+                largest_contour = max(contours, key=cv2.contourArea)
+                contour_points = largest_contour.reshape(-1, 2).tolist()
+            
+            # Add object to list
+            detected_objects.append({
+                "type": class_name,
+                "confidence": score,
+                "bbox": [int(x1), int(y1), int(x2), int(y2)],
+                "contour": contour_points
+            })
+        
+        # Group by object type
+        result = {
+            "walls": [],
+            "windows": [],
+            "doors": []
+        }
+        
+        for obj in detected_objects:
+            if obj["type"] == "Wall":
+                result["walls"].append(obj)
+            elif obj["type"] == "Window":
+                result["windows"].append(obj)
+            elif obj["type"] == "Door":
+                result["doors"].append(obj)
+        
+        return result
+    
+    return None
