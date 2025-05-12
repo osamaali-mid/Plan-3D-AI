@@ -35,7 +35,7 @@ jobs:
         username: ${{ secrets.EC2_USER }}
         key: ${{ secrets.EC2_SSH_KEY }}
         script: |
-          cd /home/ubuntu/floorplan-api
+          cd /home/${{ secrets.EC2_USER }}/floorplan-recognize
           git checkout main
           git pull origin main
           source .venv/bin/activate
