@@ -16,8 +16,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+# Initialize FastAPI app
+app = FastAPI(title="Floorplan Recognition API")
+
 # Add floorplan module to path
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
+
+# Initialize scheduler
+scheduler = BackgroundScheduler()
 
 db_connection = None
 
@@ -80,56 +86,6 @@ def get_products_data():
         return response.json()["data"]["collectionByHandle"]["products"]["edges"]
 
     raise Exception(f"Failed to retrieve products. Status code: {response.status_code}")
-
-
-def scrape_products_task():
-    print(f"Scraping products at {datetime.now()}")
-    conn = get_db_connection()
-    try:
-        cursor = conn.cursor()
-        products_data = get_products_data()
-
-        # Clear out existing products from the new table
-        cursor.execute("DELETE FROM mall_featured_products")
-
-        # Insert new products into the database
-        for product in products_data:
-            product_node = product["node"]
-            title = product_node["title"]
-            description = product_node["description"]
-            price = float(product_node["priceRange"]["minVariantPrice"]["amount"])
-            url = product_node["onlineStoreUrl"]
-            image_url = product_node["images"]["edges"][0]["node"]["originalSrc"]
-
-            insert_query = """
-            INSERT INTO mall_featured_products (title, description, price, url, image_url)
-            VALUES (%s, %s, %s, %s, %s)
-            """
-
-            data = (title, description, price, url, image_url)
-
-            cursor.execute(insert_query, data)
-
-        conn.commit()
-        print("Products updated successfully in the database.")
-    except Exception as e:
-        print(f"Error executing query: {e}")
-    finally:
-        cursor.close()
-        conn.close()
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    trigger = CronTrigger(hour=0, minute=0, second=0)
-    scheduler.add_job(scrape_products_task, trigger=trigger)
-    scheduler.start()
-    print("Scheduler started")
-    yield
-    scheduler.shutdown()
-    if db_connection is not None:
-        db_connection.close()
-        print("Database connection closed")
 
 
 # Create necessary directories
@@ -204,10 +160,6 @@ def process_floorplan_image(file_path):
         raise HTTPException(status_code=500, detail=f"Error processing floorplan: {str(e)}")
 
 
-app = FastAPI(lifespan=lifespan, title="Floorplan Recognition API", 
-              description="API for detecting elements in floorplan images")
-scheduler = BackgroundScheduler()
-
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -224,12 +176,6 @@ app.mount("/api/floorplan/images", StaticFiles(directory=OUTPUT_DIR), name="floo
 @app.get("/health")
 def health():
     return {"status": "UP"}
-
-
-@app.post("/scrape-products")
-def scrape_products():
-    scrape_products_task()
-    return {"message": "Successfully scraped products"}
 
 
 @app.post("/api/floorplan/detect", response_model=DetectionResult)
