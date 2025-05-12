@@ -25,8 +25,7 @@ jobs:
     
     - name: Run tests
       run: |
-        # Add your test commands here
-        echo "Running tests..."
+        python -m pytest
     
     - name: Deploy to EC2
       if: github.ref == 'refs/heads/main'
