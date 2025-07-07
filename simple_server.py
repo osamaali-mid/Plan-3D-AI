@@ -1,27 +1,18 @@
-import requests
+#!/usr/bin/env python3
+"""
+Simple FastAPI server for floorplan detection without heavy dependencies
+"""
 import os
 import shutil
 import uuid
 from typing import List, Optional
 import sys
-from app.config import DB_SERVER, DB_NAME, DB_USER, DB_PASSWORD, SHOPIFY_ACCESS_TOKEN
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.triggers.cron import CronTrigger
-from contextlib import asynccontextmanager
-from datetime import datetime
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Body, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
-# Optional MySQL import - will work without database if not available
-try:
-    import mysql.connector
-    MYSQL_AVAILABLE = True
-except ImportError:
-    MYSQL_AVAILABLE = False
-    print("MySQL connector not available - running without database features")
+import uvicorn
 
 # Initialize FastAPI app
 app = FastAPI(title="Floorplan Recognition API")
@@ -29,83 +20,14 @@ app = FastAPI(title="Floorplan Recognition API")
 # Add floorplan module to path
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
-# Initialize scheduler
-scheduler = BackgroundScheduler()
-
-db_connection = None
-
-
-def get_db_connection():
-    global db_connection
-    if not MYSQL_AVAILABLE:
-        return None
-    if db_connection is None or db_connection.close:
-        try:
-            db_connection = mysql.connector.connect(
-                host=DB_SERVER, user=DB_USER, password=DB_PASSWORD, database=DB_NAME
-            )
-        except Exception as e:
-            print(f"Failed to connect to database: {e}")
-    return db_connection
-
-
-def get_products_data():
-    # Shopify credentials and store details
-    SHOPIFY_STORE = "https://mall.aroomy.com"
-
-    # GraphQL query to get the product listings from the "Featured" collection
-    query = """
-    {
-      collectionByHandle(handle: "featured") {
-        title
-        products(first: 10) {
-          edges {
-            node {
-              title
-              description
-              onlineStoreUrl
-              priceRange {
-                minVariantPrice {
-                  amount
-                }
-              }
-              images(first: 5) {
-                edges {
-                  node {
-                    originalSrc
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-    """
-
-    # API request to Shopify
-    url = f"{SHOPIFY_STORE}/api/2024-01/graphql.json"
-    headers = {
-        "Content-Type": "application/json",
-        "X-Shopify-Storefront-Access-Token": SHOPIFY_ACCESS_TOKEN,
-    }
-    response = requests.post(url, json={"query": query}, headers=headers)
-
-    if response.status_code == 200:
-        return response.json()["data"]["collectionByHandle"]["products"]["edges"]
-
-    raise Exception(f"Failed to retrieve products. Status code: {response.status_code}")
-
-
 # Create necessary directories
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "uploads")
-PROCESSED_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "processed")
-OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "output")
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "data", "uploads")
+PROCESSED_DIR = os.path.join(os.path.dirname(__file__), "data", "processed")
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "data", "output")
 
 # Ensure directories exist
 for directory in [UPLOAD_DIR, PROCESSED_DIR, OUTPUT_DIR]:
     os.makedirs(directory, exist_ok=True)
-
 
 # Create Pydantic models for API
 class DetectionResult(BaseModel):
@@ -114,25 +36,21 @@ class DetectionResult(BaseModel):
     elements: dict
     image_url: str
 
-
-class FloorplanElement(BaseModel):
-    type: str
-    confidence: float
-    coordinates: List[List[float]]
-
-
 # Import floor plan processing functions
-from floorplan.preprocess import preprocess_image
-# Use detection factory to automatically switch between real and mock implementations
-from floorplan.mock_detection import load_model, detect_objects
+try:
+    from app.floorplan.preprocess import preprocess_image
+    from app.floorplan.mock_detection import load_model, detect_objects
+    PROCESSING_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Could not import processing modules: {e}")
+    PROCESSING_AVAILABLE = False
 
-# Load the Mask R-CNN model once at startup
+# Load the model once at startup
 model = None
-
 
 def get_model():
     global model
-    if model is None:
+    if model is None and PROCESSING_AVAILABLE:
         try:
             model = load_model()
             print("Model loaded successfully")
@@ -140,9 +58,22 @@ def get_model():
             print(f"Error loading model: {e}")
     return model
 
-
 def process_floorplan_image(file_path):
     """Process a floorplan image and return detection results"""
+    if not PROCESSING_AVAILABLE:
+        # Return mock results if processing is not available
+        file_id = str(uuid.uuid4())
+        return {
+            "id": file_id,
+            "filename": os.path.basename(file_path),
+            "elements": {
+                "walls": [{"type": "Wall", "confidence": 0.95, "bbox": [10, 10, 100, 100], "contour": [[10, 10], [100, 10], [100, 100], [10, 100]]}],
+                "windows": [{"type": "Window", "confidence": 0.88, "bbox": [50, 50, 80, 80], "contour": [[50, 50], [80, 50], [80, 80], [50, 80]]}],
+                "doors": [{"type": "Door", "confidence": 0.92, "bbox": [20, 20, 60, 60], "contour": [[20, 20], [60, 20], [60, 60], [20, 60]]}]
+            },
+            "image_url": f"/api/floorplan/images/mock_detected.jpg"
+        }
+    
     try:
         # Generate unique IDs for processed files
         file_id = str(uuid.uuid4())
@@ -168,7 +99,6 @@ def process_floorplan_image(file_path):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing floorplan: {str(e)}")
 
-
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -181,11 +111,9 @@ app.add_middleware(
 # Mount static files directory for serving images
 app.mount("/api/floorplan/images", StaticFiles(directory=OUTPUT_DIR), name="floorplan_images")
 
-
 @app.get("/health")
 def health():
-    return {"status": "UP"}
-
+    return {"status": "UP", "processing_available": PROCESSING_AVAILABLE}
 
 @app.post("/api/floorplan/detect", response_model=DetectionResult)
 async def detect_floorplan(file: UploadFile = File(...)):
@@ -215,7 +143,6 @@ async def detect_floorplan(file: UploadFile = File(...)):
             os.remove(temp_file_path)
         raise HTTPException(status_code=500, detail=f"Error processing the floorplan: {str(e)}")
 
-
 @app.get("/api/floorplan/results/{result_id}")
 def get_floorplan_result(result_id: str):
     """Get the results of a specific floorplan detection"""
@@ -225,3 +152,6 @@ def get_floorplan_result(result_id: str):
         raise HTTPException(status_code=404, detail="Result not found")
     
     return FileResponse(output_file)
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
